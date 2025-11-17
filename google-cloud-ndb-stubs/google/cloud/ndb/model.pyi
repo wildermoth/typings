@@ -399,8 +399,8 @@ class Model:
     _has_repeated: bool
     _kind_map: Dict[str, Type[Model]]
 
-    key: key_module.Key
-    _key: key_module.Key
+    key: Optional[key_module.Key]
+    _key: Optional[key_module.Key]
 
     def __init__(
         self,
