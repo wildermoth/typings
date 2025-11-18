@@ -11,7 +11,7 @@ from google.cloud.client import ClientWithProject
 from google.cloud.datastore.batch import Batch
 from google.cloud.datastore.entity import Entity
 from google.cloud.datastore.key import Key
-from google.cloud.datastore.query import Query
+from google.cloud.datastore.query import BaseFilter, Query
 from google.cloud.datastore.aggregation import AggregationQuery
 from google.cloud.datastore.transaction import Transaction
 
@@ -155,7 +155,7 @@ class Client(ClientWithProject):
 
     def key(
         self,
-        *path_args: Union[str, int],
+        *path_args: Union[str, int, None],
         namespace: Optional[str] = ...,
         **kwargs: Any
     ) -> Key:
@@ -184,7 +184,18 @@ class Client(ClientWithProject):
         """Create a new Transaction for transactional operations."""
         ...
 
-    def query(self, **kwargs: Any) -> Query:
+    def query(
+        self,
+        kind: Optional[str] = ...,
+        project: Optional[str] = ...,
+        namespace: Optional[str] = ...,
+        ancestor: Optional[Key] = ...,
+        filters: Iterable[Union[BaseFilter, Tuple[str, str, Any]]] = ...,
+        projection: Iterable[str] = ...,
+        order: Iterable[str] = ...,
+        distinct_on: Iterable[str] = ...,
+        explain_options: Optional[Any] = ...,
+    ) -> Query:
         """Create a new Query for fetching entities."""
         ...
 
