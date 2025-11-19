@@ -6,6 +6,7 @@ T = TypeVar("T")
 UUID4 = Any
 NonNegativeInt = int
 PositiveInt = int
+NonNegativeFloat = float
 
 # Classes
 class BaseModel:
@@ -27,3 +28,7 @@ def field_serializer(field: str, **kwargs: Any) -> Callable[[Any], Any]: ...
 
 # The fix: defined as property to satisfy type checkers treating accessing the field as property access
 def computed_field(func: Callable[..., T]) -> property: ...
+
+# Validators
+class AfterValidator:
+    def __init__(self, func: Callable[[Any], Any]) -> None: ...
