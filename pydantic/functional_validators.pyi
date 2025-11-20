@@ -295,32 +295,63 @@ def field_validator(
     check_fields: bool | None = None,
     json_schema_input_type: Any = PydanticUndefined,
 ) -> Callable[[Any], Any]:
-    """Decorate methods on the class indicating that they should be used to validate fields.
+    """
+    Decorate methods on the class indicating that they should be used to validate fields.
+
+    **Important for LSP/Type Checkers:**
+    - The decorator preserves the method signature for inspection
+    - Validators are typically classmethods and receive (cls, value) or (cls, value, info)
+    - The decorated method can be called directly for testing
+    - Return type should match or be compatible with the field type
+
+    Common signatures:
+    - mode='after': `def validate(cls, value: T) -> T` or `def validate(cls, value: T, info: ValidationInfo) -> T`
+    - mode='before': `def validate(cls, value: Any) -> Any` or `def validate(cls, value: Any, info: ValidationInfo) -> Any`
+    - mode='wrap': `def validate(cls, value: Any, handler: ValidatorFunctionWrapHandler) -> T`
+    - mode='plain': `def validate(cls, value: Any) -> T`
 
     Args:
         field: The first field the field_validator should be called on.
         *fields: Additional field(s) the field_validator should be called on.
         mode: Specifies whether to validate the fields before or after validation.
+            - 'before': Run before Pydantic's internal validation
+            - 'after': Run after Pydantic's internal validation (default)
+            - 'wrap': Wrap Pydantic's validation, allowing you to call it conditionally
+            - 'plain': Replace Pydantic's validation entirely
         check_fields: Whether to check that the fields actually exist on the model.
         json_schema_input_type: The input type of the function for JSON Schema generation.
 
     Returns:
-        A decorator that can be used to decorate a function to be used as a field_validator.
+        A decorator that preserves the method signature while marking it as a validator.
 
     Example:
         ```python
-        from pydantic import BaseModel, field_validator
+        from pydantic import BaseModel, field_validator, ValidationInfo
 
         class Model(BaseModel):
-            a: str
+            name: str
+            age: int
 
-            @field_validator('a')
+            @field_validator('name')
             @classmethod
-            def ensure_foobar(cls, v):
-                if 'foobar' not in v:
-                    raise ValueError('"foobar" not found in a')
+            def validate_name(cls, v: str) -> str:
+                '''LSP should show this takes str and returns str'''
+                if not v.strip():
+                    raise ValueError('name cannot be empty')
+                return v.strip()
+
+            @field_validator('age', mode='before')
+            @classmethod
+            def parse_age(cls, v: Any) -> int:
+                '''Before validators can receive Any and must return compatible type'''
+                if isinstance(v, str):
+                    return int(v)
                 return v
         ```
+
+    Note:
+        The decorator returns the same function, so LSP can inspect the signature.
+        Use @classmethod before @field_validator for proper cls access.
     """
     ...
 
@@ -442,16 +473,39 @@ def model_validator(
     *,
     mode: Literal['wrap', 'before', 'after'],
 ) -> Any:
-    """Decorate model methods for validation purposes.
+    """
+    Decorate model methods for validation purposes.
+
+    **Important for LSP/Type Checkers:**
+    - The decorator preserves the method signature for inspection
+    - Model validators run on the entire model (not individual fields)
+    - Different modes have different signatures:
+        - mode='after': `def validate(self) -> Self` - runs after field validation
+        - mode='before': `def validate(cls, data: Any) -> Any` - runs before field validation
+        - mode='wrap': `def validate(cls, data: Any, handler: ModelWrapValidatorHandler) -> Self`
+
+    Common signatures:
+    - mode='after': Receives the fully validated model instance
+        - `def validate(self) -> Self`
+        - `def validate(self, info: ValidationInfo) -> Self`
+    - mode='before': Receives raw input data (dict, object, etc.)
+        - `def validate(cls, data: Any) -> Any`
+        - `def validate(cls, data: Any, info: ValidationInfo) -> Any`
+        - `def validate(data: Any) -> Any` (without cls for free functions)
+    - mode='wrap': Can call the default validation or skip it
+        - `def validate(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self`
+        - `def validate(cls, data: Any, handler: ModelWrapValidatorHandler[Self], info: ValidationInfo) -> Self`
 
     Args:
         mode: A required string literal that specifies the validation mode.
-            It can be one of the following: 'wrap', 'before', or 'after'.
+            - 'after': Run after all field validations (receives validated model instance)
+            - 'before': Run before field validations (receives raw input data)
+            - 'wrap': Wrap the validation process (can call or skip default validation)
 
     Returns:
-        A decorator that can be used to decorate a function to be used as a model validator.
+        A decorator that preserves the method signature while marking it as a model validator.
 
-    Example:
+    Examples:
         ```python
         from pydantic import BaseModel, model_validator
         from typing_extensions import Self
@@ -462,10 +516,44 @@ def model_validator(
 
             @model_validator(mode='after')
             def verify_square(self) -> Self:
+                '''After validators receive the validated instance and can perform
+                cross-field validation. LSP should show this returns Self.'''
                 if self.width != self.height:
                     raise ValueError('width and height do not match')
                 return self
+
+        class FlexibleModel(BaseModel):
+            data: dict[str, Any]
+
+            @model_validator(mode='before')
+            @classmethod
+            def normalize_data(cls, values: Any) -> dict[str, Any]:
+                '''Before validators can transform input data before validation.
+                They receive raw input (Any) and return dict for field validation.'''
+                if isinstance(values, str):
+                    import json
+                    return {'data': json.loads(values)}
+                return values
+
+        class ConditionalModel(BaseModel):
+            value: int
+
+            @model_validator(mode='wrap')
+            @classmethod
+            def conditional_validation(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+                '''Wrap validators can conditionally call default validation.
+                LSP should show handler returns Self.'''
+                if isinstance(data, dict) and data.get('skip_validation'):
+                    # Skip validation for certain inputs
+                    return cls.model_construct(**data)
+                # Call default validation
+                return handler(data)
         ```
+
+    Note:
+        - Use @classmethod for 'before' and 'wrap' modes
+        - Use instance method (self) for 'after' mode
+        - The decorator preserves signatures, so LSP can show proper types
     """
     ...
 

@@ -22,7 +22,7 @@ from pydantic_core import CoreSchema, SchemaSerializer, SchemaValidator
 from pydantic_core.core_schema import ValidationError
 
 from .config import ConfigDict, ExtraValues
-from .fields import ComputedFieldInfo, FieldInfo, ModelPrivateAttr
+from .fields import ComputedFieldInfo, Field, FieldInfo, ModelPrivateAttr
 from .json_schema import (
     DEFAULT_REF_TEMPLATE,
     GenerateJsonSchema,
@@ -51,7 +51,31 @@ class BaseModel:
 
     Usage Documentation: https://docs.pydantic.dev/latest/concepts/models/
 
-    A base class for creating Pydantic models.
+    A base class for creating Pydantic models with automatic validation.
+
+    BaseModel uses a metaclass (ModelMetaclass) to enable:
+    - Automatic validation of data against type hints
+    - Descriptor protocol for fields (FieldInfo on class, actual values on instances)
+    - Generic model support via __class_getitem__
+    - Computed fields via @computed_field decorator
+
+    When you define a field on a BaseModel:
+    - On the class: accessing the field returns FieldInfo metadata
+    - On an instance: accessing the field returns the validated value
+
+    Example:
+        ```python
+        from pydantic import BaseModel, Field
+
+        class User(BaseModel):
+            name: str
+            age: int = Field(ge=0, description="User's age")
+
+        # On class: User.age returns FieldInfo
+        # On instance: user.age returns the int value
+        user = User(name="Alice", age=30)
+        assert user.age == 30  # Returns int, not FieldInfo
+        ```
 
     Attributes:
         model_config: Configuration dictionary for the model.
@@ -61,7 +85,7 @@ class BaseModel:
         model_fields_set: Names of fields explicitly set during instantiation.
     """
 
-    # Class variables set by metaclass
+    # Class variables set by metaclass (ModelMetaclass)
     model_config: ClassVar[ConfigDict]
     __class_vars__: ClassVar[set[str]]
     __private_attributes__: ClassVar[Dict[str, ModelPrivateAttr]]
@@ -431,9 +455,37 @@ class BaseModel:
     def __copy__(self) -> Self: ...
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self: ...
     def __rich_repr__(self) -> TupleGenerator: ...
+    @classmethod
     def __class_getitem__(
         cls, typevar_values: type[Any] | tuple[type[Any], ...]
-    ) -> type[BaseModel]: ...
+    ) -> type[Self]:
+        """
+        Support for generic models via subscript syntax.
+
+        Allows creating parameterized versions of generic models:
+            GenericModel[int], GenericModel[str, float], etc.
+
+        Args:
+            typevar_values: Type parameter(s) for the generic model.
+
+        Returns:
+            A new model class with the specified type parameters.
+
+        Example:
+            ```python
+            from typing import Generic, TypeVar
+            from pydantic import BaseModel
+
+            T = TypeVar('T')
+
+            class GenericModel(BaseModel, Generic[T]):
+                value: T
+
+            IntModel = GenericModel[int]
+            instance = IntModel(value=42)
+            ```
+        """
+        ...
 
 
 def create_model(

@@ -129,44 +129,75 @@ def field_serializer(
     when_used: WhenUsed = 'always',
     check_fields: bool | None = None,
 ) -> Callable[[_FieldWrapSerializerT], _FieldWrapSerializerT] | Callable[[_FieldPlainSerializerT], _FieldPlainSerializerT]:
-    """Decorator that enables custom field serialization.
+    """
+    Decorator that enables custom field serialization.
 
-    Four signatures are supported:
+    **Important for LSP/Type Checkers:**
+    - The decorator preserves the method signature for inspection
+    - Serializers customize how field values are converted during model_dump/model_dump_json
+    - The decorated method can be called directly for testing
+    - Common signatures:
+        - mode='plain': `def serialize(self, value: T) -> Any` or with info parameter
+        - mode='wrap': `def serialize(self, value: T, nxt: SerializerFunctionWrapHandler) -> Any`
 
-    - `(self, value: Any, info: FieldSerializationInfo)`
-    - `(self, value: Any, nxt: SerializerFunctionWrapHandler, info: FieldSerializationInfo)`
-    - `(value: Any, info: SerializationInfo)`
-    - `(value: Any, nxt: SerializerFunctionWrapHandler, info: SerializationInfo)`
+    Supported signatures:
+    - Instance methods (most common):
+        - `(self, value: T) -> Any`
+        - `(self, value: T, info: FieldSerializationInfo) -> Any`
+        - `(self, value: T, nxt: SerializerFunctionWrapHandler) -> Any` (wrap mode)
+        - `(self, value: T, nxt: SerializerFunctionWrapHandler, info: FieldSerializationInfo) -> Any` (wrap mode)
+    - Static/free functions:
+        - `(value: T) -> Any`
+        - `(value: T, info: SerializationInfo) -> Any`
+        - `(value: T, nxt: SerializerFunctionWrapHandler) -> Any` (wrap mode)
+        - `(value: T, nxt: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any` (wrap mode)
 
     Args:
         fields: Which field(s) the method should be called on.
         mode: The serialization mode.
-            - 'plain' means the function will be called instead of the default serialization logic,
-            - 'wrap' means the function will be called with an argument to optionally call the
-               default serialization logic.
+            - 'plain': Function replaces default serialization logic
+            - 'wrap': Function wraps default serialization (can call it via nxt handler)
         return_type: Optional return type for the function, if omitted it will be inferred from the type annotation.
-        when_used: Determines the serializer will be used for serialization.
+        when_used: Determines when the serializer will be used.
+            - 'always': Use for all serialization (default)
+            - 'unless-none': Use only when value is not None
+            - 'json': Use only for JSON serialization (model_dump_json)
+            - 'json-unless-none': Use for JSON serialization when value is not None
         check_fields: Whether to check that the fields actually exist on the model.
 
     Returns:
-        The decorator function.
+        A decorator that preserves the method signature while marking it as a field serializer.
 
-    Example:
+    Examples:
         ```python
         from pydantic import BaseModel, field_serializer
+        from pydantic_core import SerializerFunctionWrapHandler
 
         class StudentModel(BaseModel):
-            name: str = 'Jane'
+            name: str
             courses: set[str]
+            score: float
 
             @field_serializer('courses', when_used='json')
-            def serialize_courses_in_order(self, courses: set[str]):
+            def serialize_courses_sorted(self, courses: set[str]) -> list[str]:
+                '''Plain serializer: LSP should show this takes set[str] and returns list[str]'''
                 return sorted(courses)
 
-        student = StudentModel(courses={'Math', 'Chemistry', 'English'})
-        print(student.model_dump_json())
-        #> {"name":"Jane","courses":["Chemistry","English","Math"]}
+            @field_serializer('score', mode='wrap')
+            def serialize_score_rounded(self, score: float, nxt: SerializerFunctionWrapHandler) -> float:
+                '''Wrap serializer: can call default serialization or customize.
+                LSP should show this receives the field value and a handler.'''
+                # Round to 2 decimal places
+                return round(score, 2)
+
+        student = StudentModel(name='Jane', courses={'Math', 'Chemistry', 'English'}, score=95.678)
+        # Serializers are called during model_dump() and model_dump_json()
+        assert student.model_dump_json()  # courses will be sorted in JSON output
         ```
+
+    Note:
+        The decorator preserves signatures, allowing LSP to infer types correctly.
+        Serializers only affect output (dump/json), not the stored field values.
     """
     ...
 

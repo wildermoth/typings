@@ -546,9 +546,19 @@ def Field(
     union_mode: Literal['smart', 'left_to_right'] = ...,
     fail_fast: bool | None = ...,
 ) -> Any:
-    """Create a field for objects that can be configured.
+    """
+    Create a field for objects that can be configured.
 
     Used to provide extra information about a field, either for the model schema or complex validation.
+
+    **Important for LSP/Type Checkers:**
+    When you use Field() in a model, the behavior depends on context:
+    - At class definition time: Field() returns FieldInfo (the descriptor/metadata)
+    - On the class itself: Accessing MyModel.field_name returns FieldInfo
+    - On an instance: Accessing instance.field_name returns the actual validated value (type T)
+
+    This is achieved through Pydantic's metaclass and descriptor protocol, which
+    replaces the FieldInfo with appropriate accessors.
 
     Args:
         default: Default value if the field is not set.
@@ -589,7 +599,23 @@ def Field(
         fail_fast: If True, validation will stop on the first error.
 
     Returns:
-        A new FieldInfo instance.
+        A new FieldInfo instance (at class definition time).
+
+    Example:
+        ```python
+        from pydantic import BaseModel, Field
+
+        class User(BaseModel):
+            name: str = Field(min_length=1, description="User's name")
+            age: int = Field(ge=0, le=150, description="User's age")
+
+        # At runtime on an instance:
+        user = User(name="Alice", age=30)
+        assert user.age == 30  # Returns int, not FieldInfo
+
+        # On the class (for introspection):
+        assert isinstance(User.model_fields['age'], FieldInfo)
+        ```
     """
     ...
 
@@ -733,10 +759,29 @@ class ComputedFieldInfo:
         """The deprecation message to be emitted, or `None` if not set."""
         ...
 
+# PropertyT represents property, cached_property, or a wrapped function that becomes a property
+# Note: property is not generic (see https://github.com/python/typing/issues/985)
+# but this TypeVar captures both property and cached_property instances
 PropertyT = TypeVar('PropertyT')
 
 @overload
-def computed_field(func: PropertyT, /) -> PropertyT: ...
+def computed_field(func: PropertyT, /) -> PropertyT:
+    """
+    Decorator to include property when serializing models.
+
+    Direct usage (no arguments): @computed_field decorates an already-wrapped @property.
+
+    Args:
+        func: A property or cached_property instance to mark as a computed field.
+
+    Returns:
+        The same property, now marked as a computed field for Pydantic.
+
+    Note:
+        The decorated value is a property, so LSP should show it as a readonly attribute
+        on instances, not as a method. The return type is inferred from the property getter.
+    """
+    ...
 
 @overload
 def computed_field(
@@ -751,7 +796,32 @@ def computed_field(
     json_schema_extra: JsonDict | Callable[[JsonDict], None] | None = None,
     repr: bool = True,
     return_type: Any = PydanticUndefined,
-) -> Callable[[PropertyT], PropertyT]: ...
+) -> Callable[[PropertyT], PropertyT]:
+    """
+    Decorator to include property when serializing models (with configuration).
+
+    Keyword-only usage: @computed_field(...) returns a decorator that wraps a property.
+
+    Args:
+        alias: Alias to use when serializing this computed field.
+        alias_priority: Priority of the alias.
+        title: Title to use when including this computed field in JSON Schema.
+        field_title_generator: A callable that takes a field name and returns title for it.
+        description: Description to use when including this computed field in JSON Schema.
+        deprecated: A deprecation message or boolean.
+        examples: Example values to use when including this computed field in JSON Schema.
+        json_schema_extra: A dict or callable to provide extra JSON schema properties.
+        repr: Whether to include this computed field in model repr.
+        return_type: Optional return type for serialization logic.
+
+    Returns:
+        A decorator that marks a property as a computed field.
+
+    Note:
+        The decorated value is a property, so LSP should show it as a readonly attribute
+        on instances, not as a method.
+    """
+    ...
 
 def computed_field(
     func: PropertyT | None = None,
@@ -768,10 +838,22 @@ def computed_field(
     repr: bool | None = None,
     return_type: Any = PydanticUndefined,
 ) -> PropertyT | Callable[[PropertyT], PropertyT]:
-    """Decorator to include property and cached_property when serializing models or dataclasses.
+    """
+    Decorator to include property and cached_property when serializing models or dataclasses.
+
+    This decorator can be used in two ways:
+    1. Direct: @computed_field (must be applied after @property)
+    2. With args: @computed_field(alias='...') (must be applied after @property)
+
+    When applied to a @property or @cached_property, it marks that property to be included
+    in model serialization and JSON schema generation.
+
+    **Important for LSP/Type Checkers:**
+    The decorated property remains a property - accessing it on an instance calls the getter
+    function and returns the computed value, not a FieldInfo or descriptor object.
 
     Args:
-        func: The function to wrap.
+        func: The property or cached_property to decorate (when used without parentheses).
         alias: Alias to use when serializing this computed field.
         alias_priority: Priority of the alias.
         title: Title to use when including this computed field in JSON Schema.
@@ -781,9 +863,34 @@ def computed_field(
         examples: Example values to use when including this computed field in JSON Schema.
         json_schema_extra: A dict or callable to provide extra JSON schema properties.
         repr: Whether to include this computed field in model repr.
-        return_type: Optional return type for serialization logic.
+        return_type: Optional return type for serialization logic (usually inferred).
 
     Returns:
-        A proxy wrapper for the property.
+        Either the decorated property (if func provided) or a decorator function.
+        The return type preserves the property nature for proper LSP inference.
+
+    Example:
+        ```python
+        from pydantic import BaseModel, computed_field
+
+        class Rectangle(BaseModel):
+            width: int
+            length: int
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def area(self) -> int:
+                '''Computed area property - appears in serialization.'''
+                return self.width * self.length
+
+        rect = Rectangle(width=3, length=4)
+        # LSP should infer: rect.area -> int (not a method call, not FieldInfo)
+        assert rect.area == 12
+        assert rect.model_dump() == {'width': 3, 'length': 4, 'area': 12}
+        ```
+
+    Note:
+        Mypy may show "Decorated property not supported" warnings - use
+        # type: ignore[prop-decorator] to suppress. Pyright handles this correctly.
     """
     ...
